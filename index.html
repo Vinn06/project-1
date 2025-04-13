@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SunTime – Estimator Waktu Siang</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      padding: 1rem;
+      background: #f4f4f4;
+      color: #333;
+      transition: background 0.3s, color 0.3s;
+    }
+    h1 {
+      color: #e67e22;
+    }
+    input, button, select {
+      margin: 0.5rem 0;
+      padding: 0.5rem;
+    }
+    .output, .chart-container, #map, .sun-position, .weather-info, .summary {
+      margin-top: 1rem;
+      padding: 1rem;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+    .dark-mode {
+      background: #121212;
+      color: #eee;
+    }
+    .dark-mode .output, .dark-mode .chart-container, .dark-mode #map, .dark-mode .sun-position, .dark-mode .weather-info, .dark-mode .summary {
+      background: #1e1e1e;
+      color: #eee;
+    }
+    #map { height: 300px; }
+    canvas { max-width: 100%; }
+    [data-tooltip] {
+      position: relative;
+      cursor: help;
+    }
+    [data-tooltip]:hover::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: 125%;
+      left: 0;
+      background: #333;
+      color: #fff;
+      padding: 5px 10px;
+      border-radius: 4px;
+      white-space: nowrap;
+      z-index: 10;
+      font-size: 0.8rem;
+    }
+  </style>
+</head>
+<body>
+  <h1 data-tooltip="Aplikasi ini memperkirakan durasi siang berdasarkan lokasi dan tanggal">SunTime – Estimator Waktu Siang</h1>
+
+  <button onclick="toggleDarkMode()" data-tooltip="Klik untuk beralih mode terang/gelap">Ganti Mode Gelap/Terang</button><br><br>
+
+  <label for="latitude" data-tooltip="Masukkan lintang lokasi (dalam derajat)">Lintang (°):</label><br>
+  <input type="number" id="latitude" step="0.0001" value="-6.2" /><br>
+
+  <label for="date" data-tooltip="Pilih tanggal untuk estimasi">Pilih Tanggal:</label><br>
+  <input type="date" id="date" /><br>
+
+  <button onclick="calculateDaylight()" data-tooltip="Klik untuk menghitung durasi siang">Hitung</button>
+
+  <div id="map" data-tooltip="Klik pada peta untuk memilih lokasi dan menghitung secara otomatis"></div>
+
+  <div class="output" id="result" data-tooltip="Hasil perhitungan durasi siang, waktu matahari terbit dan terbenam"></div>
+
+  <div class="chart-container" data-tooltip="Grafik perubahan durasi siang sepanjang tahun">
+    <canvas id="daylightChart"></canvas>
+  </div>
+
+  <div class="sun-position" id="sunPosition" data-tooltip="Posisi matahari saat ini berdasarkan waktu dan lokasi">Memuat posisi matahari...</div>
+
+  <div class="weather-info" id="weatherInfo" data-tooltip="Info cuaca saat ini berdasarkan lokasi">Memuat info cuaca...</div>
+
+  <div class="summary" id="summary" data-tooltip="Kesimpulan otomatis berdasarkan hasil perhitungan">Memuat kesimpulan...</div>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    function toRadians(deg) { return deg * Math.PI / 180; }
+    function toDegrees(rad) { return rad * 180 / Math.PI; }
+
+    function getDeclination(dayOfYear) {
+      return 23.44 * Math.sin(toRadians((360 / 365) * (dayOfYear + 10)));
+    }
+
+    function getDayOfYear(date) {
+      return Math.floor((date - new Date(date.getFullYear(), 0, 0)) / 86400000);
+    }
+
+    function calculateDaylightIntegral(lat, decl) {
+      const latRad = toRadians(lat);
+      const declRad = toRadians(decl);
+      const interval = 0.1;
+      let daylight = 0;
+
+      for (let t = 0; t < 24; t += interval) {
+        const hourAngle = toRadians((t - 12) * 15);
+        const sinAlt = Math.sin(latRad) * Math.sin(declRad) + Math.cos(latRad) * Math.cos(declRad) * Math.cos(hourAngle);
+        if (sinAlt > 0) daylight += interval;
+      }
+
+      return daylight;
+    }
+
+    async function getLocationName(lat, lon) {
+      try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&addressdetails=1`);
+        const data = await res.json();
+        const address = data.address;
+        return `${address.village || address.town || address.city || "Desa/Town"} ${address.county || address.state_district || ""}, ${address.state || ""}, ${address.country || ""}`;
+      } catch (err) {
+        return "Nama lokasi tidak dapat ditemukan";
+      }
+    }
+
+    async function calculateDaylight() {
+      const lat = parseFloat(document.getElementById('latitude').value);
+      const date = new Date(document.getElementById('date').value);
+
+      if (isNaN(lat) || !date.getTime()) {
+        alert("Masukkan lintang dan tanggal yang valid.");
+        return;
+      }
+
+      const n = getDayOfYear(date);
+      const decl = getDeclination(n);
+      const daylightHours = calculateDaylightIntegral(lat, decl);
+      const sunrise = 12 - daylightHours / 2;
+      const sunset = 12 + daylightHours / 2;
+
+      const formatTime = (t) => {
+        let h = Math.floor(t);
+        let m = Math.round((t - h) * 60);
+        if (m >= 60) { m = 0; h++; }
+        if (h >= 24) h -= 24;
+        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+      }
+
+      const locationName = await getLocationName(lat, marker.getLatLng().lng);
+
+      document.getElementById('result').innerHTML = `
+        <strong>Tanggal:</strong> ${date.toDateString()}<br>
+        <strong>Lintang:</strong> ${lat.toFixed(4)}°<br>
+        <strong>Deklination Matahari:</strong> ${decl.toFixed(2)}°<br>
+        <strong>Metode:</strong> Integral Trigonometri Numerik<br>
+        <strong>Durasi Siang:</strong> ${Math.floor(daylightHours)} jam ${Math.round((daylightHours % 1) * 60)} menit<br>
+        <strong>Matahari Terbit:</strong> ${formatTime(sunrise)}<br>
+        <strong>Matahari Terbenam:</strong> ${formatTime(sunset)}<br>
+      `;
+
+      document.getElementById('summary').innerHTML = `
+        <strong>Kesimpulan:</strong><br>
+        Pada tanggal ${date.toLocaleDateString('id-ID')}, di lintang ${lat.toFixed(2)}°, durasi siang sekitar ${Math.floor(daylightHours)} jam ${Math.round((daylightHours % 1) * 60)} menit. Matahari terbit pukul ${formatTime(sunrise)} dan terbenam pukul ${formatTime(sunset)}. Lokasi: ${locationName}.
+      `;
+
+      drawDaylightChart(date.getFullYear(), lat);
+      updateSunPosition(lat);
+      updateWeather(lat, marker.getLatLng().lng);
+    }
+
+    function drawDaylightChart(year, lat) {
+      let data = [];
+      for (let n = 1; n <= 365; n++) {
+        const decl = getDeclination(n);
+        data.push(calculateDaylightIntegral(lat, decl));
+      }
+      const labels = Array.from({ length: 365 }, (_, i) => i + 1);
+      const ctx = document.getElementById('daylightChart').getContext('2d');
+      if (window.dayChart) window.dayChart.destroy();
+      window.dayChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Durasi Siang (jam)',
+            data,
+            borderColor: '#e67e22',
+            fill: false
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: { title: { display: true, text: 'Hari ke-' } },
+            y: { title: { display: true, text: 'Jam Siang' }, min: 0, max: 24 }
+          }
+        }
+      });
+    }
+
+    function updateSunPosition(lat) {
+      const now = new Date();
+      const n = getDayOfYear(now);
+      const decl = getDeclination(n);
+      const declRad = toRadians(decl);
+      const latRad = toRadians(lat);
+      const hours = now.getHours() + now.getMinutes() / 60;
+      const H = toRadians((hours - 12) * 15);
+      const sinAlt = Math.sin(latRad) * Math.sin(declRad) + Math.cos(latRad) * Math.cos(declRad) * Math.cos(H);
+      const alt = toDegrees(Math.asin(sinAlt));
+      const cosAz = (Math.sin(declRad) - Math.sin(latRad) * sinAlt) / (Math.cos(latRad) * Math.cos(Math.asin(sinAlt)));
+      const az = toDegrees(Math.acos(cosAz));
+
+      document.getElementById("sunPosition").innerHTML = `
+        <strong>Posisi Matahari Saat Ini</strong><br>
+        <strong>Waktu:</strong> ${now.toLocaleTimeString('id-ID', { hour12: false })}<br>
+        <strong>Ketinggian (Altitude):</strong> ${alt.toFixed(2)}°<br>
+        <strong>Arah (Azimuth):</strong> ${az.toFixed(2)}°<br>
+      `;
+    }
+
+    async function updateWeather(lat, lon) {
+      try {
+        const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`);
+        const data = await res.json();
+        const weather = data.current_weather;
+        const weatherIcon = getWeatherIcon(weather.weathercode);
+        document.getElementById("weatherInfo").innerHTML = `
+          <strong>Cuaca Saat Ini</strong><br>
+          <strong>Suhu:</strong> ${weather.temperature}°C<br>
+          <strong>Angin:</strong> ${weather.windspeed} km/jam<br>
+          <strong>Kondisi:</strong> ${weatherIcon}
+        `;
+      } catch (err) {
+        document.getElementById("weatherInfo").innerText = "Gagal memuat cuaca.";
+      }
+    }
+
+    function getWeatherIcon(code) {
+      const map = {
+        0: "☀️ Cerah", 1: "🌤️ Sedikit Awan", 2: "⛅ Sebagian Berawan", 3: "☁️ Berawan",
+        45: "🌫️ Berkabut", 48: "🌫️ Berkabut Tebal", 51: "🌦️ Gerimis Ringan", 53: "🌦️ Gerimis Sedang",
+        55: "🌧️ Gerimis Lebat", 61: "🌦️ Hujan Ringan", 63: "🌧️ Hujan Sedang", 65: "🌧️ Hujan Lebat",
+        71: "🌨️ Salju Ringan", 73: "🌨️ Salju Sedang", 75: "❄️ Salju Lebat", 95: "⛈️ Badai Petir",
+        96: "⛈️ Badai + Es", 99: "⛈️ Parah + Es"
+      };
+      return map[code] || "🌈 Tidak Diketahui";
+    }
+
+    function toggleDarkMode() {
+      document.body.classList.toggle('dark-mode');
+    }
+
+    const map = L.map('map').setView([-6.2, 106.8], 5);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
+    let marker = L.marker([-6.2, 106.8]).addTo(map);
+    map.on('click', function(e) {
+      const latlng = e.latlng;
+      document.getElementById('latitude').value = latlng.lat.toFixed(4);
+      marker.setLatLng(latlng);
+      calculateDaylight();
+    });
+
+    document.getElementById('date').valueAsDate = new Date();
+
+    setInterval(() => {
+      const lat = parseFloat(document.getElementById('latitude').value);
+      if (!isNaN(lat)) {
+        updateSunPosition(lat);
+        updateWeather(lat, marker.getLatLng().lng);
+      }
+    }, 900000);
+  </script>
+</body>
+</html>
