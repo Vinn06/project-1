@@ -55,12 +55,26 @@
       z-index: 10;
       font-size: 0.8rem;
     }
+    details summary {
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
   <h1 data-tooltip="Aplikasi ini memperkirakan durasi siang berdasarkan lokasi dan tanggal">SunTime – Estimator Waktu Siang</h1>
 
   <button onclick="toggleDarkMode()" data-tooltip="Klik untuk beralih mode terang/gelap">Ganti Mode Gelap/Terang</button><br><br>
+
+  <details class="output" data-tooltip="Klik untuk melihat langkah-langkah penggunaan aplikasi">
+    <summary><strong>📘 Help</strong></summary>
+    <ol style="margin-top: 1rem;">
+      <li>Masukkan lintang lokasi secara manual atau klik pada peta untuk memilih lokasi otomatis.</li>
+      <li>Pilih tanggal yang diinginkan untuk estimasi durasi siang.</li>
+      <li>Klik tombol <strong>Hitung</strong> untuk mendapatkan hasil estimasi.</li>
+      <li>Lihat hasil di bawah, termasuk waktu matahari terbit, terbenam, dan grafik durasi siang tahunan.</li>
+      <li>Info cuaca dan posisi matahari akan diperbarui otomatis setiap 15 menit.</li>
+    </ol>
+  </details>
 
   <label for="latitude" data-tooltip="Masukkan lintang lokasi (dalam derajat)">Lintang (°):</label><br>
   <input type="number" id="latitude" step="0.0001" value="-6.2" /><br>
@@ -71,17 +85,12 @@
   <button onclick="calculateDaylight()" data-tooltip="Klik untuk menghitung durasi siang">Hitung</button>
 
   <div id="map" data-tooltip="Klik pada peta untuk memilih lokasi dan menghitung secara otomatis"></div>
-
   <div class="output" id="result" data-tooltip="Hasil perhitungan durasi siang, waktu matahari terbit dan terbenam"></div>
-
   <div class="chart-container" data-tooltip="Grafik perubahan durasi siang sepanjang tahun">
     <canvas id="daylightChart"></canvas>
   </div>
-
   <div class="sun-position" id="sunPosition" data-tooltip="Posisi matahari saat ini berdasarkan waktu dan lokasi">Memuat posisi matahari...</div>
-
   <div class="weather-info" id="weatherInfo" data-tooltip="Info cuaca saat ini berdasarkan lokasi">Memuat info cuaca...</div>
-
   <div class="summary" id="summary" data-tooltip="Kesimpulan otomatis berdasarkan hasil perhitungan">Memuat kesimpulan...</div>
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
@@ -125,79 +134,126 @@
     }
 
     async function calculateDaylight() {
-      const lat = parseFloat(document.getElementById('latitude').value);
-      const date = new Date(document.getElementById('date').value);
+  const lat = parseFloat(document.getElementById('latitude').value);
+  const date = new Date(document.getElementById('date').value);
 
-      if (isNaN(lat) || !date.getTime()) {
-        alert("Masukkan lintang dan tanggal yang valid.");
-        return;
-      }
+  if (isNaN(lat) || !date.getTime()) {
+    alert("Masukkan lintang dan tanggal yang valid.");
+    return;
+  }
 
-      const n = getDayOfYear(date);
-      const decl = getDeclination(n);
-      const daylightHours = calculateDaylightIntegral(lat, decl);
-      const sunrise = 12 - daylightHours / 2;
-      const sunset = 12 + daylightHours / 2;
+  const n = getDayOfYear(date);
+  const decl = getDeclination(n);
+  const daylightHours = calculateDaylightIntegral(lat, decl);
+  const sunrise = 12 - daylightHours / 2;
+  const sunset = 12 + daylightHours / 2;
 
-      const formatTime = (t) => {
-        let h = Math.floor(t);
-        let m = Math.round((t - h) * 60);
-        if (m >= 60) { m = 0; h++; }
-        if (h >= 24) h -= 24;
-        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
-      }
+  const formatTime = (t) => {
+    let h = Math.floor(t);
+    let m = Math.round((t - h) * 60);
+    if (m >= 60) { m = 0; h++; }
+    if (h >= 24) h -= 24;
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+  }
 
-      const locationName = await getLocationName(lat, marker.getLatLng().lng);
+  const locationName = await getLocationName(lat, marker.getLatLng().lng);
 
-      document.getElementById('result').innerHTML = `
-        <strong>Tanggal:</strong> ${date.toDateString()}<br>
-        <strong>Lintang:</strong> ${lat.toFixed(4)}°<br>
-        <strong>Deklination Matahari:</strong> ${decl.toFixed(2)}°<br>
-        <strong>Metode:</strong> Integral Trigonometri Numerik<br>
-        <strong>Durasi Siang:</strong> ${Math.floor(daylightHours)} jam ${Math.round((daylightHours % 1) * 60)} menit<br>
-        <strong>Matahari Terbit:</strong> ${formatTime(sunrise)}<br>
-        <strong>Matahari Terbenam:</strong> ${formatTime(sunset)}<br>
-      `;
+  // Wilayah Indonesia yang akan dihitung durasi siangnya
+  const indonesiaCoordinates = [
+    { name: "Aceh", lat: 5.6, lon: 95.5 },
+    { name: "Jakarta", lat: -6.2, lon: 106.8 },
+    { name: "Bali", lat: -8.4, lon: 115.2 },
+    { name: "Makassar", lat: -5.1, lon: 119.5 },
+    { name: "Papua", lat: -4.5, lon: 136.9 }
+  ];
 
-      document.getElementById('summary').innerHTML = `
-        <strong>Kesimpulan:</strong><br>
-        Pada tanggal ${date.toLocaleDateString('id-ID')}, di lintang ${lat.toFixed(2)}°, durasi siang sekitar ${Math.floor(daylightHours)} jam ${Math.round((daylightHours % 1) * 60)} menit. Matahari terbit pukul ${formatTime(sunrise)} dan terbenam pukul ${formatTime(sunset)}. Lokasi: ${locationName}.
-      `;
+  let longestDay = { location: "", daylightHours: 0 };
+  let shortestDay = { location: "", daylightHours: Infinity };
 
-      drawDaylightChart(date.getFullYear(), lat);
-      updateSunPosition(lat);
-      updateWeather(lat, marker.getLatLng().lng);
+  // Menghitung durasi siang untuk wilayah Indonesia
+  for (let region of indonesiaCoordinates) {
+    const declRegion = getDeclination(n);
+    const daylightRegion = calculateDaylightIntegral(region.lat, declRegion);
+    
+    if (daylightRegion > longestDay.daylightHours) {
+      longestDay = { location: region.name, daylightHours: daylightRegion };
     }
+
+    if (daylightRegion < shortestDay.daylightHours) {
+      shortestDay = { location: region.name, daylightHours: daylightRegion };
+    }
+  }
+
+  document.getElementById('result').innerHTML = `
+    <strong>Tanggal:</strong> ${date.toDateString()}<br>
+    <strong>Lintang:</strong> ${lat.toFixed(4)}°<br>
+    <strong>Deklination Matahari:</strong> ${decl.toFixed(2)}°<br>
+    <strong>Metode:</strong> Integral Trigonometri Numerik<br>
+    <strong>Durasi Siang:</strong> ${Math.floor(daylightHours)} jam ${Math.round((daylightHours % 1) * 60)} menit<br>
+    <strong>Matahari Terbit:</strong> ${formatTime(sunrise)}<br>
+    <strong>Matahari Terbenam:</strong> ${formatTime(sunset)}<br>
+  `;
+
+  document.getElementById('summary').innerHTML = `
+    <strong>Kesimpulan:</strong><br>
+    Pada tanggal ${date.toLocaleDateString('id-ID')}, di lintang ${lat.toFixed(2)}°, durasi siang sekitar ${Math.floor(daylightHours)} jam ${Math.round((daylightHours % 1) * 60)} menit. Matahari terbit pukul ${formatTime(sunrise)} dan terbenam pukul ${formatTime(sunset)}. Lokasi: ${locationName}.<br><br>
+    <strong>Wilayah Indonesia dengan durasi siang terlama:</strong> ${longestDay.location} (${Math.floor(longestDay.daylightHours)} jam ${Math.round((longestDay.daylightHours % 1) * 60)} menit)<br>
+    <strong>Wilayah Indonesia dengan durasi siang tersingkat:</strong> ${shortestDay.location} (${Math.floor(shortestDay.daylightHours)} jam ${Math.round((shortestDay.daylightHours % 1) * 60)} menit)
+  `;
+
+  drawDaylightChart(date.getFullYear(), lat);
+  updateSunPosition(lat);
+  updateWeather(lat, marker.getLatLng().lng);
+}
+
 
     function drawDaylightChart(year, lat) {
-      let data = [];
-      for (let n = 1; n <= 365; n++) {
+    let data = [];
+    for (let n = 1; n <= 365; n++) {
         const decl = getDeclination(n);
         data.push(calculateDaylightIntegral(lat, decl));
-      }
-      const labels = Array.from({ length: 365 }, (_, i) => i + 1);
-      const ctx = document.getElementById('daylightChart').getContext('2d');
-      if (window.dayChart) window.dayChart.destroy();
-      window.dayChart = new Chart(ctx, {
+    }
+
+    const labels = Array.from({ length: 365 }, (_, i) => i + 1);
+    const ctx = document.getElementById('daylightChart').getContext('2d');
+    if (window.dayChart) window.dayChart.destroy();
+    window.dayChart = new Chart(ctx, {
         type: 'line',
         data: {
-          labels,
-          datasets: [{
-            label: 'Durasi Siang (jam)',
-            data,
-            borderColor: '#e67e22',
-            fill: false
-          }]
+            labels,
+            datasets: [{
+                label: 'Durasi Siang (jam)',
+                data,
+                borderColor: '#e67e22',
+                fill: false
+            }]
         },
         options: {
-          responsive: true,
-          scales: {
-            x: { title: { display: true, text: 'Hari ke-' } },
-            y: { title: { display: true, text: 'Jam Siang' }, min: 0, max: 24 }
-          }
+            responsive: true,
+            scales: {
+                x: {
+                    title: { display: true, text: 'Hari ke-' },
+                    ticks: {
+                        autoSkip: false,
+                        minRotation: 0,
+                        maxRotation: 0,
+                        callback: function(value, index) {
+                            const day = index + 1;
+                            if (day === 360) return ''; // sembunyikan hari ke-360
+                            if (day === 1 || day % 15 === 0 || day === 365) return day;
+                            return '';
+                        }
+                    }
+                },
+                y: {
+                    title: { display: true, text: 'Jam Siang' },
+                    min: 0,
+                    max: 24
+                }
+            }
         }
-      });
-    }
+    });
+}
 
     function updateSunPosition(lat) {
       const now = new Date();
